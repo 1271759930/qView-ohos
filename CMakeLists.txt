@@ -27,6 +27,13 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+# OHOS cross-compilation configuration
+# Temporarily relax find_package policy to find Qt outside sysroot
+if(CMAKE_CROSSCOMPILING)
+  set(_saved_root_path_mode_package "${CMAKE_FIND_ROOT_PATH_MODE_PACKAGE}")
+  set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+endif()
+
 # Find required Qt components
 find_package(Qt6 QUIET COMPONENTS Core Gui Network Widgets Svg)
 if(Qt6_FOUND)
@@ -36,7 +43,8 @@ if(Qt6_FOUND)
     find_package(Qt6 QUIET COMPONENTS LinguistTools)
 else()
     set(QT5_FIND_COMPONENTS Core Gui Network Widgets Svg)
-    if(UNIX AND NOT APPLE)
+    # X11Extras is only needed for Linux X11 platform, not for OHOS
+    if(UNIX AND NOT APPLE AND NOT OHOS)
         list(APPEND QT5_FIND_COMPONENTS X11Extras)
     endif()
     find_package(Qt5 REQUIRED COMPONENTS ${QT5_FIND_COMPONENTS})
@@ -44,6 +52,12 @@ else()
     set(QT_VERSION ${Qt5_VERSION})
     # Find optional tools
     find_package(Qt5 QUIET COMPONENTS LinguistTools)
+endif()
+
+# Restore find_package policy after Qt is found
+if(CMAKE_CROSSCOMPILING)
+  set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE "${_saved_root_path_mode_package}")
+  unset(_saved_root_path_mode_package)
 endif()
 
 # Source files
@@ -117,8 +131,8 @@ elseif(APPLE)
         list(APPEND PROJECT_SOURCES src/qvcocoafunctions.mm)
         list(APPEND PROJECT_HEADERS src/qvcocoafunctions.h)
     endif()
-elseif(UNIX AND NOT APPLE)
-    # For Linux, add X11-specific functions and headers.
+elseif(UNIX AND NOT APPLE AND NOT OHOS)
+    # For Linux X11 platform, add X11-specific functions and headers (not for OHOS)
     option(NO_X11 "Build without X11" OFF)
     if(NOT NO_X11)
         list(APPEND PROJECT_SOURCES src/qvlinuxx11functions.cpp)
@@ -137,9 +151,19 @@ if(WIN32)
     )
     list(APPEND PROJECT_RESOURCES "${CMAKE_CURRENT_BINARY_DIR}/qView.rc")
 endif()
-add_executable(${PROJECT_NAME} ${EXECUTABLE_TYPE} ${PROJECT_SOURCES} ${PROJECT_HEADERS} ${PROJECT_FORMS} ${PROJECT_RESOURCES})
+# Build as library for OHOS platform, executable for other platforms
+if(CMAKE_CROSSCOMPILING AND OHOS)
+  add_library(${PROJECT_NAME} SHARED ${PROJECT_SOURCES} ${PROJECT_HEADERS} ${PROJECT_FORMS} ${PROJECT_RESOURCES})
+else()
+  add_executable(${PROJECT_NAME} ${EXECUTABLE_TYPE} ${PROJECT_SOURCES} ${PROJECT_HEADERS} ${PROJECT_FORMS} ${PROJECT_RESOURCES})
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Gui Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Svg)
+
+# Link OHOS platform integration plugin for cross-compilation
+if(CMAKE_CROSSCOMPILING AND OHOS)
+  target_link_libraries(${PROJECT_NAME} PRIVATE Qt${QT_VERSION_MAJOR}::QOhosPlatformIntegrationPlugin)
+endif()
 
 # Set the executable name to lowercase on Linux
 if(UNIX AND NOT APPLE)
@@ -196,7 +220,7 @@ elseif(APPLE)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
     )
-elseif(UNIX AND NOT APPLE)
+elseif(UNIX AND NOT APPLE AND NOT OHOS)
     if(NOT NO_X11)
         find_package(X11 REQUIRED)
         set(PLATFORM_SPECIFIC_LIBS ${X11_LIBRARIES})
